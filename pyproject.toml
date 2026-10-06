@@ -2,6 +2,22 @@
 requires = ["setuptools", "toml"]
 build-backend = "setuptools.build_meta"
 
+# `uv sync` environment for the mjlab implementation. The Isaac Lab package (source/whole_body_tracking) is not part
+# of it and is installed separately into an Isaac Lab environment.
+[project]
+name = "whole-body-tracking"
+version = "0.1.0"
+requires-python = ">=3.10,<3.15"
+dependencies = ["whole_body_tracking_mjlab"]
+
+[tool.uv]
+package = false
+# rsl_rl's W&B writer passes wandb.Settings(start_method=...), which wandb 0.29 removed.
+constraint-dependencies = ["wandb<0.29"]
+
+[tool.uv.sources]
+whole_body_tracking_mjlab = { path = "source/whole_body_tracking_mjlab", editable = true }
+
 [tool.isort]
 
 atomic = true

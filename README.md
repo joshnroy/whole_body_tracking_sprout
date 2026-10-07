@@ -251,7 +251,8 @@ both feet; body and joint metadata are used to handle the exported subset/order.
 
 For keyboard control, click the 3D scene and press **P** to play, then use **WASD** or the arrow keys. Click the scene
 again after editing a numeric input; shortcuts are inactive while typing into inputs. The camera stays behind the
-simulated robot's heading, including while turning or strafing; it cannot orbit, pan, or zoom.
+simulated robot with a damped chase camera. Position and heading ease into changes, with stronger filtering of vertical
+walking bob. The world stays fixed; reset snaps the camera to the starting pose. It cannot orbit, pan, or zoom.
 Mouse motion and the wheel have no effect on the scene, and the pointer is never captured. A/D request body-relative
 lateral velocity; Q/E request yaw. Diagonal translation is scaled to avoid a speed boost. The browser integrates the
 smoothed requested yaw into the reference heading, so strafing does not request a turn. Other matcher callers retain
@@ -262,7 +263,10 @@ Slider/button commands persist until changed; keyboard driving replaces them. Th
 possible: zero velocity requests a stop but does
 not freeze the robot, and a walking clip may not reproduce every requested velocity. With the supplied Sprout walking
 export, lateral requests produce weak/inconsistent sidestepping in physics; reliable strafing needs a suitable motion
-database and policy. The controls do not teleport the robot or force sideways physics velocities.
+database and policy. This export is a motion tracker: its command observation contains reference joint positions and
+velocities, not forward/lateral/yaw velocity requests. The matcher translates those browser requests into reference
+motion; adding a lateral UI control does not train a sidestep skill. The controls do not teleport the robot or force
+sideways physics velocities.
 Use **Pause** to freeze physics.
 If a training termination fires, the viewer pauses and reports the reason; **Reset** is required to continue.
 All connected browsers share one simulation and its controls. The simulation pauses when the last browser disconnects.

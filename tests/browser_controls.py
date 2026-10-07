@@ -144,7 +144,7 @@ with sync_playwright() as p:
     page.keyboard.up("q")
     expect(body).to_contain_text("Turn +0.00 rad/s")
     assert cameras[-1]["position"] != camera_before_turn["position"]
-    assert abs(cameras[-1]["position"][2] - 1.2) < 1e-6
+    assert abs(cameras[-1]["position"][2] - cameras[-1]["look_at"][2] - 1.05) < 1e-5, cameras[-1]
     print("PASS: chase camera rotates with simulated robot heading")
     page.keyboard.press("r")
     expect(body).to_contain_text("Paused · 0.00 s")

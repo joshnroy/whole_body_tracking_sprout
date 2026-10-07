@@ -12,6 +12,7 @@ import mjlab
 import tyro
 from mjlab.tasks.registry import list_tasks
 from whole_body_tracking_mjlab.motion_matching import MotionMatcher, MotionMatcherCfg, yaw_from_quat
+from whole_body_tracking_mjlab.scripts.browser_camera import ChaseCamera
 from whole_body_tracking_mjlab.scripts.browser_keyboard import KeyboardBridge
 from whole_body_tracking_mjlab.scripts.motion_match import FOOT_BODY_PATTERN
 from whole_body_tracking_mjlab.scripts.sim2sim import Sim2Sim, Sim2SimConfig
@@ -126,6 +127,8 @@ class BrowserViewer:
         self.keyboard_owner = None
         self.keyboard_deadline = 0.0
         self.keyboard = None
+        self.camera = ChaseCamera()
+        self._camera_updated = time.monotonic()
         self._display_command: tuple[float, float, float] | None = None
         cfg = session.cfg
         self.server = viser.ViserServer(host=cfg.host, port=cfg.port, label="Motion control")
@@ -141,7 +144,7 @@ class BrowserViewer:
                 "Hold **W / ↑** to walk forward, **S / ↓** to walk backward.\n\n"
                 "Hold **A / ←** to strafe left, **D / →** to strafe right.\n\n"
                 "Hold **Q / E** to turn left / right. Release to stop commanding movement.\n\n"
-                "The camera stays behind Sprout. Mouse movement does not affect the robot or camera.\n\n"
+                "The camera follows smoothly behind Sprout. Mouse movement does not affect the robot or camera.\n\n"
                 "**Space**: stop commands · **P**: play/pause · **R**: reset\n\n"
                 "Keys control the robot only; input boxes keep normal typing behavior.\n\n"
                 "Motion comes from the recorded clip. Requested velocities are approximate; "
@@ -183,9 +186,9 @@ class BrowserViewer:
                     self._button(label, action, value)
             self.play_button = self._button("Play", "toggle_pause", 0.0)
             self._button("Reset", "reset", 0.0)
-            # Scene positions are centered on the tracked body. Camera heading
-            # follows the simulated robot below, not the requested turn command.
-            self.scene.camera_tracking_enabled = True
+            # Keep the world fixed: recentering geometry on every torso update
+            # would reintroduce gait bob even with a damped camera.
+            self.scene.camera_tracking_enabled = False
 
             self.keyboard = KeyboardBridge(self.server, self.events, cfg.host, cfg.keyboard_port or cfg.port + 1)
 
@@ -238,16 +241,24 @@ class BrowserViewer:
                 self.session.control("stop")
             self.keyboard_owner = None
             self.session.control(action, value)
+            if action == "reset":
+                self.camera.reset()
 
     def render(self) -> None:
         s = self.session
         self.scene.update_from_mjdata(s.sim.data)
-        yaw = float(yaw_from_quat(s.sim.data.xquat[s.matcher.body_ids[0]]))
+        body_id = s.matcher.body_ids[0]
+        yaw = float(yaw_from_quat(s.sim.data.xquat[body_id]))
+        now = time.monotonic()
+        eye, look_at = self.camera.update(s.sim.data.xpos[body_id], yaw, now - self._camera_updated)
+        self._camera_updated = now
         for client in self.server.get_clients().values():
             with client.atomic():
                 client.camera.up_direction = (0.0, 0.0, 1.0)
-                client.camera.look_at = (0.0, 0.0, 0.15)
-                client.camera.position = (-2.5 * np.cos(yaw), -2.5 * np.sin(yaw), 1.2)
+                # Viser translates look_at when position changes; set the
+                # target last so both commands describe the same camera pose.
+                client.camera.position = eye
+                client.camera.look_at = look_at
         # Do not overwrite a slider edit while its callback is waiting for the
         # next simulation tick, or continually reset an in-progress numeric edit.
         if s.command != self._display_command:

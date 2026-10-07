@@ -12,6 +12,7 @@ import mjlab
 import tyro
 from mjlab.tasks.registry import list_tasks
 from whole_body_tracking_mjlab.motion_matching import MotionMatcher, MotionMatcherCfg
+from whole_body_tracking_mjlab.scripts.browser_keyboard import KeyboardBridge
 from whole_body_tracking_mjlab.scripts.motion_match import FOOT_BODY_PATTERN
 from whole_body_tracking_mjlab.scripts.sim2sim import Sim2Sim, Sim2SimConfig
 
@@ -26,6 +27,8 @@ class BrowserConfig:
     """Listen address. Bind a private network address for remote access, or use an SSH tunnel."""
     port: int = 8080
     """HTTP and WebSocket port for the browser viewer."""
+    keyboard_port: int | None = None
+    """Keyboard WebSocket port. Defaults to the viewer port plus one; expose both for remote access."""
     start_frame: int = 0
     foot_body_names: tuple[str, str] | None = None
     matcher: MotionMatcherCfg = field(default_factory=MotionMatcherCfg)
@@ -115,7 +118,10 @@ class BrowserViewer:
         from mjviser import ViserMujocoScene
 
         self.session = session
-        self.events: SimpleQueue[tuple[str, float]] = SimpleQueue()
+        self.events: SimpleQueue = SimpleQueue()
+        self.keyboard_owner = None
+        self.keyboard_deadline = 0.0
+        self.keyboard = None
         self._display_command: tuple[float, float] | None = None
         cfg = session.cfg
         self.server = viser.ViserServer(host=cfg.host, port=cfg.port, label="Motion control")
@@ -128,11 +134,11 @@ class BrowserViewer:
             self.server.gui.add_markdown(
                 "## Motion control\n"
                 "Click the 3D scene, then press **P** to play.\n\n"
-                "**W / ↑**: faster forward · **S / ↓**: slower / backward\n\n"
-                "**A / ←**: turn left · **D / →**: turn right\n\n"
-                "**Space**: zero speed and turn · **P**: play/pause · **R**: reset\n\n"
-                "Each key press adjusts the command; commands persist until changed. "
-                "Click the scene again after editing a number to use shortcuts.\n\n"
+                "Hold **W / ↑** to walk forward, **S / ↓** to walk backward.\n\n"
+                "Hold **A / ←** to turn left, **D / →** to turn right. Release to stop commanding movement.\n\n"
+                "**Mouse drag**: orbit the following camera · **Wheel**: zoom\n\n"
+                "**Space**: stop commands · **P**: play/pause · **R**: reset\n\n"
+                "Keys control the robot only; input boxes keep normal typing behavior.\n\n"
                 "Motion matching selects from the recorded clip; requested speeds and turns are approximate."
             )
             self.status = self.server.gui.add_markdown("")
@@ -153,17 +159,19 @@ class BrowserViewer:
                 )
                 self.forward.on_update(self._slider_callback("set_forward"))
                 self.turn.on_update(self._slider_callback("set_turn"))
-                for label, action, value, keys in (
-                    ("Forward ↑", "forward", 0.1, ("arrowup", "W")),
-                    ("Backward ↓", "forward", -0.1, ("arrowdown", "S")),
-                    ("Turn left ←", "turn", 0.25, ("arrowleft", "A")),
-                    ("Turn right →", "turn", -0.25, ("arrowright", "D")),
-                    ("Stop commands", "stop", 0.0, ("space",)),
+                for label, action, value in (
+                    ("Forward ↑", "forward", 0.1),
+                    ("Backward ↓", "forward", -0.1),
+                    ("Turn left ←", "turn", 0.25),
+                    ("Turn right →", "turn", -0.25),
+                    ("Stop commands", "stop", 0.0),
                 ):
-                    self._button(label, action, value, *keys)
-            self.play_button = self._button("Play", "toggle_pause", 0.0, "P")
-            self._button("Reset", "reset", 0.0, "R")
+                    self._button(label, action, value)
+            self.play_button = self._button("Play", "toggle_pause", 0.0)
+            self._button("Reset", "reset", 0.0)
             self.scene.create_scene_gui(camera_distance=2.5, camera_azimuth=135, camera_elevation=15)
+
+            self.keyboard = KeyboardBridge(self.server, self.events, cfg.host, cfg.keyboard_port or cfg.port + 1)
 
             @self.server.on_client_disconnect
             def _(_client):
@@ -185,16 +193,33 @@ class BrowserViewer:
 
         return callback
 
-    def _button(self, label, action, value, *hotkeys):
+    def _button(self, label, action, value):
         button = self.server.gui.add_button(label)
 
         async def callback(_event):
             self.events.put((action, value))
 
         button.on_click(callback)
-        for hotkey in hotkeys:
-            self.server.gui.add_command(f"{label} ({hotkey})", hotkey=hotkey).on_trigger(callback)
         return button
+
+    def _control(self, action, value):
+        if action == "keyboard":
+            owner, received, forward, turn = value
+            # Ignore input that waited in the queue longer than its lease.
+            if time.monotonic() - received < 0.6:
+                self.keyboard_owner = owner
+                self.keyboard_deadline = received + 0.6
+                self.session.control("set_forward", forward * (0.4 if forward > 0 else 0.2))
+                self.session.control("set_turn", turn * 0.5)
+        elif action == "release":
+            if value == self.keyboard_owner:
+                self.session.control("stop")
+                self.keyboard_owner = None
+        else:
+            if self.keyboard_owner is not None:
+                self.session.control("stop")
+            self.keyboard_owner = None
+            self.session.control(action, value)
 
     def render(self) -> None:
         s = self.session
@@ -224,15 +249,20 @@ class BrowserViewer:
                 started = time.monotonic()
                 while True:
                     try:
-                        s.control(*self.events.get_nowait())
+                        self._control(*self.events.get_nowait())
                     except Empty:
                         break
+                if self.keyboard_owner is not None and time.monotonic() >= self.keyboard_deadline:
+                    self._control("release", self.keyboard_owner)
                 if not self.server.get_clients():
+                    s.control("stop")
                     s.control("pause")
                 s.step()
                 self.render()
                 time.sleep(max(0.0, s.sim.step_dt - (time.monotonic() - started)))
         finally:
+            if self.keyboard is not None:
+                self.keyboard.stop()
             self.server.stop()
 
 

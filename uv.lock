@@ -3938,6 +3938,7 @@ dependencies = [
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "onnxruntime", version = "1.30.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "viser" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -3946,6 +3947,7 @@ requires-dist = [
     { name = "mjviser", specifier = ">=0.0.14" },
     { name = "onnxruntime" },
     { name = "viser", specifier = ">=1.1.1" },
+    { name = "websockets", specifier = ">=14" },
 ]
 
 [[package]]

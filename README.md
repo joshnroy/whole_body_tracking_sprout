@@ -239,17 +239,21 @@ both feet; body and joint metadata are used to handle the exported subset/order.
 
 | Control | Effect |
 |---|---|
-| Forward/backward buttons, W / S, or ↑ / ↓ | Change requested forward speed by 0.1 m/s |
-| Left/right buttons, A / D, or ← / → | Change requested turn rate by 0.25 rad/s |
+| Hold W / S or ↑ / ↓ | Walk forward at 0.4 m/s / backward at 0.2 m/s; release to clear |
+| Hold A / D or ← / → | Turn left / right at 0.5 rad/s; combine with forward/backward |
+| Mouse drag / wheel | Orbit around the tracked robot / zoom |
+| Forward/backward and left/right buttons | Adjust persistent commands by 0.1 m/s and 0.25 rad/s |
 | Sliders | Set forward speed and turn rate directly |
 | Stop commands / Space | Set both requested velocities to zero |
 | Play/Pause / P | Start or freeze physics |
 | Reset / R | Restore the starting pose, clear commands and delays, and pause |
 
 For keyboard control, click the 3D scene and press **P** to play, then use **WASD** or the arrow keys. Click the scene
-again after editing a numeric input; shortcuts are inactive while typing into inputs. Each key press adjusts the command.
+again after editing a numeric input; shortcuts are inactive while typing into inputs. The camera follows the robot with
+**Track camera** enabled by default. Movement keys do not move the camera. A/D turn the robot; this policy does not strafe.
+Keyboard commands clear on release, focus loss, or disconnect, and expire within 0.6 seconds if input stops arriving.
 
-Commands persist until changed. The clip determines which motions are possible: zero velocity requests a stop but does
+Slider/button commands persist until changed; keyboard driving replaces them. The clip determines which motions are possible: zero velocity requests a stop but does
 not freeze the robot, and a walking clip may not reproduce every requested speed/turn. Use **Pause** to freeze physics.
 If a training termination fires, the viewer pauses and reports the reason; **Reset** is required to continue.
 All connected browsers share one simulation and its controls. The simulation pauses when the last browser disconnects.
@@ -257,10 +261,15 @@ All connected browsers share one simulation and its controls. The simulation pau
 For a remote machine, keep the default loopback bind and tunnel the port:
 
 ```bash
-ssh -N -L 8080:127.0.0.1:8080 user@your-server
+ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 user@your-server
 ```
 
 Or bind to a trusted private network address with `--host <private-ip> --port 8080` and open that address in the browser.
+Keyboard input uses a second WebSocket on `--keyboard-port` (default: viewer port + 1, normally 8081).
+Expose/tunnel both ports; the page displays a connection warning if keyboard input is unavailable. Keyboard connections
+use a per-viewer connection token. The adapter uses Viser's internal `RunJavascriptMessage` to install the bundled
+keyboard client; browser checks should be rerun when upgrading Viser. No installed Viser files are modified.
+
 The viewer has no authentication; anyone who can reach the port can control the shared simulation. It does not request
 a public sharing link. Robot models, checkpoints, and motion assets are supplied locally and are not included here.
 
@@ -413,3 +422,12 @@ python scripts/rsl_rl/play.py --task=Tracking-Flat-G1-v0 --num_envs=2 --wandb_pa
 
 - **`scripts`**
   Includes utility scripts for preprocessing motion data, training policies, and evaluating trained policies.
+
+Browser input regression (with the server running):
+
+```bash
+uv run --no-project --with playwright --with msgspec python tests/browser_controls.py
+```
+
+Install Chromium with Playwright first, or set `WBT_CHROMIUM_EXECUTABLE` to an existing browser.
+`WBT_BROWSER_URL` defaults to `http://localhost:8080`. This check changes the shared simulation state.

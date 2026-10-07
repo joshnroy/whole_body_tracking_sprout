@@ -1,4 +1,4 @@
-"""Motion matching over a single reference clip, steered by forward/backward speed and yaw rate commands.
+"""Motion matching over a single reference clip, steered by planar velocity and yaw rate commands.
 
 The database is one training npz (``wbt-csv-to-npz`` output, e.g. the walking clip a tracking policy was trained on),
 so every generated frame is a frame of that clip, which the policy has learned to track. The matcher follows Holden's
@@ -121,10 +121,13 @@ class MotionMatcherCfg:
     """Commands are clipped to the range the clip covers."""
     max_backward_speed: float = 0.3
     max_yaw_rate: float = 1.5
+    max_lateral_speed: float = 0.3
+    command_heading: bool = False
+    """Integrate the smoothed requested yaw rate for the reference heading instead of recorded yaw motion."""
 
 
 class MotionMatcher:
-    """Generates a reference motion frame by frame from (forward speed, yaw rate) commands.
+    """Generates a reference motion frame by frame from forward, lateral, and yaw-rate commands.
 
     ``reset`` and ``step`` return the reference frame as a dict with ``joint_pos`` and ``joint_vel`` (J,) in the npz's
     joint order and ``body_pos_w``, ``body_quat_w``, ``body_lin_vel_w``, ``body_ang_vel_w`` (B, 3 or 4) in its body
@@ -308,17 +311,17 @@ class MotionMatcher:
         )
 
     def _advance_command_model(
-        self, vel: np.ndarray, yaw_rate: float, yaw: float, command: tuple[float, float]
+        self, vel: np.ndarray, yaw_rate: float, yaw: float, command: tuple[float, ...]
     ) -> tuple[np.ndarray, float, float]:
         """One step of the command model: world-frame velocity and yaw rate converge to the command."""
         alpha = 1.0 - np.exp(-LN2 * self.dt / self.cfg.command_halflife)
         yaw_rate += (command[1] - yaw_rate) * alpha
         yaw += yaw_rate * self.dt
-        target = rotate2d(np.array(yaw), np.array([command[0], 0.0]))
+        target = rotate2d(np.array(yaw), np.array([command[0], command[2] if len(command) > 2 else 0.0]))
         vel = vel + (target - vel) * alpha
         return vel, yaw_rate, yaw
 
-    def desired_trajectory(self, command: tuple[float, float]) -> np.ndarray:
+    def desired_trajectory(self, command: tuple[float, ...]) -> np.ndarray:
         """Trajectory features predicted by the command model from the current state, in the root's heading frame."""
         vel, yaw_rate, yaw = self.cmd_vel.copy(), self.cmd_yaw_rate, self.yaw
         pos = np.zeros(2)
@@ -344,15 +347,18 @@ class MotionMatcher:
         self.offsets = {k: (np.zeros_like(v), np.zeros_like(v)) for k, v in self._clip_velocities(frame).items()}
         self.channels = self._blended_channels()
         self.cmd_vel = rotate2d(np.array(self.yaw), self.root_vel[frame])
-        self.cmd_yaw_rate = float(self.root_yaw_rate[frame])
-        self.command = (0.0, 0.0)
+        self.cmd_yaw_rate = 0.0 if self.cfg.command_heading else float(self.root_yaw_rate[frame])
+        self.command = (0.0, 0.0, 0.0)
         self.frames_since_search = 0
         self.num_jumps = 0
         return self._forward_kinematics()
 
-    def step(self, forward_speed: float, yaw_rate: float) -> dict[str, np.ndarray]:
+    def step(self, forward_speed: float, yaw_rate: float, *, lateral_speed: float = 0.0) -> dict[str, np.ndarray]:
         """Advance one clip frame (1 / fps s) under the command and return the new reference frame."""
-        command = self.clip_command(forward_speed, yaw_rate)
+        command = (
+            *self.clip_command(forward_speed, yaw_rate),
+            float(np.clip(lateral_speed, -self.cfg.max_lateral_speed, self.cfg.max_lateral_speed)),
+        )
         self.cmd_vel, self.cmd_yaw_rate, _ = self._advance_command_model(
             self.cmd_vel, self.cmd_yaw_rate, self.yaw, command
         )
@@ -371,13 +377,16 @@ class MotionMatcher:
                 current = self._blended_channels()
         self.command = command
 
+        if self.cfg.command_heading:
+            current["root_yaw_rate"] = np.array([self.cmd_yaw_rate])
+
         # Integrate the root in its heading frame, like the clip's own root motion.
         self.xy = self.xy + rotate2d(np.array(self.yaw), current["root_vel"]) * self.dt
         self.yaw += float(current["root_yaw_rate"][0]) * self.dt
         self.channels = current
         return self._forward_kinematics()
 
-    def query(self, command: tuple[float, float]) -> np.ndarray:
+    def query(self, command: tuple[float, ...]) -> np.ndarray:
         frame = min(self.frame, self.num_valid - 1)
         pose = self.features[frame, : self.num_pose_features]
         trajectory = (
@@ -385,7 +394,7 @@ class MotionMatcher:
         ) * self.feature_scale[self.num_pose_features :]
         return np.concatenate([pose, trajectory])
 
-    def search(self, command: tuple[float, float]) -> int | None:
+    def search(self, command: tuple[float, ...]) -> int | None:
         """The frame to jump to, or None to keep playing."""
         costs = np.sum((self.features - self.query(command)) ** 2, axis=-1)
         current_cost = np.inf

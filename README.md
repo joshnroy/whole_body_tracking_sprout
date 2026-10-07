@@ -240,21 +240,30 @@ both feet; body and joint metadata are used to handle the exported subset/order.
 | Control | Effect |
 |---|---|
 | Hold W / S or ↑ / ↓ | Walk forward at 0.4 m/s / backward at 0.2 m/s; release to clear |
-| Hold A / D or ← / → | Turn left / right at 0.5 rad/s; combine with forward/backward |
-| Mouse drag / wheel | Orbit around the tracked robot / zoom |
+| Hold A / D or ← / → | Request left / right strafe at 0.2 m/s |
+| Hold Q / E | Turn left / right at 0.5 rad/s; combine with WASD |
+| Mouse | No scene controls or capture; the camera stays behind Sprout |
 | Forward/backward and left/right buttons | Adjust persistent commands by 0.1 m/s and 0.25 rad/s |
-| Sliders | Set forward speed and turn rate directly |
-| Stop commands / Space | Set both requested velocities to zero |
+| Sliders | Set forward speed, lateral speed, and turn rate directly |
+| Stop commands / Space | Clear all movement and turning commands |
 | Play/Pause / P | Start or freeze physics |
 | Reset / R | Restore the starting pose, clear commands and delays, and pause |
 
 For keyboard control, click the 3D scene and press **P** to play, then use **WASD** or the arrow keys. Click the scene
-again after editing a numeric input; shortcuts are inactive while typing into inputs. The camera follows the robot with
-**Track camera** enabled by default. Movement keys do not move the camera. A/D turn the robot; this policy does not strafe.
+again after editing a numeric input; shortcuts are inactive while typing into inputs. The camera stays behind the
+simulated robot's heading, including while turning or strafing; it cannot orbit, pan, or zoom.
+Mouse motion and the wheel have no effect on the scene, and the pointer is never captured. A/D request body-relative
+lateral velocity; Q/E request yaw. Diagonal translation is scaled to avoid a speed boost. The browser integrates the
+smoothed requested yaw into the reference heading, so strafing does not request a turn. Other matcher callers retain
+recorded heading motion unless `command_heading` is enabled.
 Keyboard commands clear on release, focus loss, or disconnect, and expire within 0.6 seconds if input stops arriving.
 
-Slider/button commands persist until changed; keyboard driving replaces them. The clip determines which motions are possible: zero velocity requests a stop but does
-not freeze the robot, and a walking clip may not reproduce every requested speed/turn. Use **Pause** to freeze physics.
+Slider/button commands persist until changed; keyboard driving replaces them. The clip determines which motions are
+possible: zero velocity requests a stop but does
+not freeze the robot, and a walking clip may not reproduce every requested velocity. With the supplied Sprout walking
+export, lateral requests produce weak/inconsistent sidestepping in physics; reliable strafing needs a suitable motion
+database and policy. The controls do not teleport the robot or force sideways physics velocities.
+Use **Pause** to freeze physics.
 If a training termination fires, the viewer pauses and reports the reason; **Reset** is required to continue.
 All connected browsers share one simulation and its controls. The simulation pauses when the last browser disconnects.
 

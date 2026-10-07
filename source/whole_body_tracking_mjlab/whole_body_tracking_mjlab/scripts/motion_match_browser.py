@@ -11,7 +11,7 @@ from queue import Empty, SimpleQueue
 import mjlab
 import tyro
 from mjlab.tasks.registry import list_tasks
-from whole_body_tracking_mjlab.motion_matching import MotionMatcher, MotionMatcherCfg
+from whole_body_tracking_mjlab.motion_matching import MotionMatcher, MotionMatcherCfg, yaw_from_quat
 from whole_body_tracking_mjlab.scripts.browser_keyboard import KeyboardBridge
 from whole_body_tracking_mjlab.scripts.motion_match import FOOT_BODY_PATTERN
 from whole_body_tracking_mjlab.scripts.sim2sim import Sim2Sim, Sim2SimConfig
@@ -31,7 +31,7 @@ class BrowserConfig:
     """Keyboard WebSocket port. Defaults to the viewer port plus one; expose both for remote access."""
     start_frame: int = 0
     foot_body_names: tuple[str, str] | None = None
-    matcher: MotionMatcherCfg = field(default_factory=MotionMatcherCfg)
+    matcher: MotionMatcherCfg = field(default_factory=lambda: MotionMatcherCfg(command_heading=True))
     actuator_delay: int | None = None
     obs_delay: int | None = None
 
@@ -69,14 +69,14 @@ class MotionMatchSession:
     def reset(self) -> None:
         self.ref = self._select(self.matcher.reset(self.cfg.start_frame))
         self.sim.reset_to(self.ref)
-        self.command = (0.0, 0.0)
+        self.command = (0.0, 0.0, 0.0)
         self.paused = True
         self.termination: list[str] = []
         self.steps = 0
 
     def control(self, action: str, value: float = 0.0) -> None:
         """Apply queued UI input on the simulation thread; never change MuJoCo from callbacks."""
-        vx, wz = self.command
+        vx, vy, wz = self.command
         if action == "reset":
             self.reset()
         elif action == "pause":
@@ -85,17 +85,21 @@ class MotionMatchSession:
             if not self.termination:
                 self.paused = not self.paused
         elif action == "stop":
-            self.command = (0.0, 0.0)
-        elif action in ("forward", "turn", "set_forward", "set_turn") and np.isfinite(value):
+            self.command = (0.0, 0.0, 0.0)
+        elif action in ("forward", "turn", "set_forward", "set_lateral", "set_turn") and np.isfinite(value):
             if action == "forward":
                 vx += value
             elif action == "turn":
                 wz += value
             elif action == "set_forward":
                 vx = value
+            elif action == "set_lateral":
+                vy = value
             else:
                 wz = value
-            self.command = self.matcher.clip_command(round(vx, 2), round(wz, 2))
+            vx, wz = self.matcher.clip_command(round(vx, 2), round(wz, 2))
+            vy = float(np.clip(round(vy, 2), -self.cfg.matcher.max_lateral_speed, self.cfg.matcher.max_lateral_speed))
+            self.command = (vx, vy, wz)
 
     def step(self) -> None:
         if self.paused:
@@ -105,9 +109,9 @@ class MotionMatchSession:
         self.steps += 1
         if self.termination:
             self.paused = True
-            self.command = (0.0, 0.0)
+            self.command = (0.0, 0.0, 0.0)
         else:
-            self.ref = self._select(self.matcher.step(*self.command))
+            self.ref = self._select(self.matcher.step(self.command[0], self.command[2], lateral_speed=self.command[1]))
 
 
 class BrowserViewer:
@@ -122,7 +126,7 @@ class BrowserViewer:
         self.keyboard_owner = None
         self.keyboard_deadline = 0.0
         self.keyboard = None
-        self._display_command: tuple[float, float] | None = None
+        self._display_command: tuple[float, float, float] | None = None
         cfg = session.cfg
         self.server = viser.ViserServer(host=cfg.host, port=cfg.port, label="Motion control")
         if self.server.get_port() != cfg.port:
@@ -135,11 +139,13 @@ class BrowserViewer:
                 "## Motion control\n"
                 "Click the 3D scene, then press **P** to play.\n\n"
                 "Hold **W / ↑** to walk forward, **S / ↓** to walk backward.\n\n"
-                "Hold **A / ←** to turn left, **D / →** to turn right. Release to stop commanding movement.\n\n"
-                "**Mouse drag**: orbit the following camera · **Wheel**: zoom\n\n"
+                "Hold **A / ←** to strafe left, **D / →** to strafe right.\n\n"
+                "Hold **Q / E** to turn left / right. Release to stop commanding movement.\n\n"
+                "The camera stays behind Sprout. Mouse movement does not affect the robot or camera.\n\n"
                 "**Space**: stop commands · **P**: play/pause · **R**: reset\n\n"
                 "Keys control the robot only; input boxes keep normal typing behavior.\n\n"
-                "Motion matching selects from the recorded clip; requested speeds and turns are approximate."
+                "Motion comes from the recorded clip. Requested velocities are approximate; "
+                "sideways motion may be weak or inconsistent with a walking-only policy."
             )
             self.status = self.server.gui.add_markdown("")
             with self.server.gui.add_folder("Drive"):
@@ -150,6 +156,13 @@ class BrowserViewer:
                     step=0.1,
                     initial_value=0.0,
                 )
+                self.lateral = self.server.gui.add_slider(
+                    "Strafe (m/s, +left)",
+                    min=-cfg.matcher.max_lateral_speed,
+                    max=cfg.matcher.max_lateral_speed,
+                    step=0.05,
+                    initial_value=0.0,
+                )
                 self.turn = self.server.gui.add_slider(
                     "Turn rate (rad/s)",
                     min=-cfg.matcher.max_yaw_rate,
@@ -158,18 +171,21 @@ class BrowserViewer:
                     initial_value=0.0,
                 )
                 self.forward.on_update(self._slider_callback("set_forward"))
+                self.lateral.on_update(self._slider_callback("set_lateral"))
                 self.turn.on_update(self._slider_callback("set_turn"))
                 for label, action, value in (
                     ("Forward ↑", "forward", 0.1),
                     ("Backward ↓", "forward", -0.1),
-                    ("Turn left ←", "turn", 0.25),
-                    ("Turn right →", "turn", -0.25),
+                    ("Turn left (Q)", "turn", 0.25),
+                    ("Turn right (E)", "turn", -0.25),
                     ("Stop commands", "stop", 0.0),
                 ):
                     self._button(label, action, value)
             self.play_button = self._button("Play", "toggle_pause", 0.0)
             self._button("Reset", "reset", 0.0)
-            self.scene.create_scene_gui(camera_distance=2.5, camera_azimuth=135, camera_elevation=15)
+            # Scene positions are centered on the tracked body. Camera heading
+            # follows the simulated robot below, not the requested turn command.
+            self.scene.camera_tracking_enabled = True
 
             self.keyboard = KeyboardBridge(self.server, self.events, cfg.host, cfg.keyboard_port or cfg.port + 1)
 
@@ -204,12 +220,14 @@ class BrowserViewer:
 
     def _control(self, action, value):
         if action == "keyboard":
-            owner, received, forward, turn = value
+            owner, received, forward, lateral, turn = value
             # Ignore input that waited in the queue longer than its lease.
             if time.monotonic() - received < 0.6:
                 self.keyboard_owner = owner
                 self.keyboard_deadline = received + 0.6
-                self.session.control("set_forward", forward * (0.4 if forward > 0 else 0.2))
+                scale = 1 / np.sqrt(2) if forward and lateral else 1.0
+                self.session.control("set_forward", forward * (0.4 if forward > 0 else 0.2) * scale)
+                self.session.control("set_lateral", lateral * 0.2 * scale)
                 self.session.control("set_turn", turn * 0.5)
         elif action == "release":
             if value == self.keyboard_owner:
@@ -224,10 +242,16 @@ class BrowserViewer:
     def render(self) -> None:
         s = self.session
         self.scene.update_from_mjdata(s.sim.data)
+        yaw = float(yaw_from_quat(s.sim.data.xquat[s.matcher.body_ids[0]]))
+        for client in self.server.get_clients().values():
+            with client.atomic():
+                client.camera.up_direction = (0.0, 0.0, 1.0)
+                client.camera.look_at = (0.0, 0.0, 0.15)
+                client.camera.position = (-2.5 * np.cos(yaw), -2.5 * np.sin(yaw), 1.2)
         # Do not overwrite a slider edit while its callback is waiting for the
         # next simulation tick, or continually reset an in-progress numeric edit.
         if s.command != self._display_command:
-            self.forward.value, self.turn.value = s.command
+            self.forward.value, self.lateral.value, self.turn.value = s.command
             self._display_command = s.command
         self.play_button.label = "Play" if s.paused else "Pause"
         self.play_button.disabled = bool(s.termination)
@@ -236,7 +260,8 @@ class BrowserViewer:
             state = "Stopped — reset to continue (" + ", ".join(s.termination) + ")"
         self.status.content = (
             f"**{state}** · {s.steps * s.sim.step_dt:.2f} s\n\n"
-            f"Forward **{s.command[0]:+.2f} m/s** · Turn **{s.command[1]:+.2f} rad/s**\n\n"
+            f"Forward **{s.command[0]:+.2f} m/s** · Strafe **{s.command[1]:+.2f} m/s**\n\n"
+            f"Turn **{s.command[2]:+.2f} rad/s**\n\n"
             f"Clip frame {s.matcher.frame} · {s.matcher.num_jumps} motion transitions"
         )
 

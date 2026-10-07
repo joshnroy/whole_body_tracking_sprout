@@ -44,18 +44,23 @@ with sync_playwright() as p:
     page.wait_for_timeout(800)
     expect(body).to_contain_text("Forward +0.40 m/s")
     page.keyboard.down("a")
-    expect(body).to_contain_text("Turn +0.50 rad/s")
+    expect(body).to_contain_text("Forward +0.28 m/s")
+    expect(body).to_contain_text("Strafe +0.14 m/s")
+    expect(body).to_contain_text("Turn +0.00 rad/s")
     page.wait_for_timeout(400)
     page.keyboard.up("w")
     expect(body).to_contain_text("Forward +0.00 m/s")
-    expect(body).to_contain_text("Turn +0.50 rad/s")
+    expect(body).to_contain_text("Strafe +0.20 m/s")
     page.keyboard.up("a")
+    expect(body).to_contain_text("Strafe +0.00 m/s")
     expect(body).to_contain_text("Turn +0.00 rad/s")
     for key, text in [
         ("s", "Forward -0.20 m/s"),
-        ("d", "Turn -0.50 rad/s"),
+        ("d", "Strafe -0.20 m/s"),
         ("ArrowUp", "Forward +0.40 m/s"),
-        ("ArrowLeft", "Turn +0.50 rad/s"),
+        ("ArrowLeft", "Strafe +0.20 m/s"),
+        ("q", "Turn +0.50 rad/s"),
+        ("e", "Turn -0.50 rad/s"),
     ]:
         page.keyboard.down(key)
         expect(body).to_contain_text(text)
@@ -69,15 +74,19 @@ with sync_playwright() as p:
     for prop in ["position", "look_at", "wxyz"]:
         assert before[prop] == after[prop], (prop, before[prop], after[prop])
     print("PASS: hold/release, combined controls, arrows, camera unaffected by keyboard")
-    # Mouse orbit should still change the camera.
+    # Mouse drag and wheel must leave the fixed chase camera alone; no pointer lock.
     box = canvas.bounding_box()
     page.mouse.move(box["x"] + 400, box["y"] + 400)
     page.mouse.down()
     page.mouse.move(box["x"] + 560, box["y"] + 450, steps=15)
     page.mouse.up()
     page.wait_for_timeout(700)
-    assert cameras[-1]["wxyz"] != before["wxyz"]
-    print("PASS: mouse orbit remains enabled")
+    page.mouse.wheel(0, 400)
+    page.wait_for_timeout(400)
+    for prop in ["position", "look_at", "wxyz"]:
+        assert cameras[-1][prop] == before[prop], prop
+    assert page.evaluate("document.pointerLockElement === null")
+    print("PASS: mouse is ignored, no capture, fixed camera")
     # Opposite keys cancel until one is released.
     page.keyboard.down("w")
     page.keyboard.down("s")
@@ -124,6 +133,19 @@ with sync_playwright() as p:
     page.wait_for_timeout(400)
     expect(body).to_contain_text("Forward +0.00 m/s")
     page.keyboard.up("w")
+    page.keyboard.press("r")
+    expect(body).to_contain_text("Paused · 0.00 s")
+    page.wait_for_timeout(500)
+    camera_before_turn = cameras[-1]
+    page.keyboard.press("p")
+    page.keyboard.down("q")
+    expect(body).to_contain_text("Turn +0.50 rad/s")
+    page.wait_for_timeout(2000)
+    page.keyboard.up("q")
+    expect(body).to_contain_text("Turn +0.00 rad/s")
+    assert cameras[-1]["position"] != camera_before_turn["position"]
+    assert abs(cameras[-1]["position"][2] - 1.2) < 1e-6
+    print("PASS: chase camera rotates with simulated robot heading")
     page.keyboard.press("r")
     expect(body).to_contain_text("Paused · 0.00 s")
     # A reload replaces the bridge and its listeners; a key must still work once.

@@ -76,9 +76,9 @@ class KeyboardBridge:
                     break
                 action = message.get("action")
                 if action == "drive":
-                    forward, turn = message.get("forward"), message.get("turn")
-                    if type(forward) is int and type(turn) is int and forward in (-1, 0, 1) and turn in (-1, 0, 1):
-                        self.events.put(("keyboard", (client_id, time.monotonic(), forward, turn)))
+                    forward, lateral, turn = (message.get(axis) for axis in ("forward", "lateral", "turn"))
+                    if all(type(axis) is int and axis in (-1, 0, 1) for axis in (forward, lateral, turn)):
+                        self.events.put(("keyboard", (client_id, time.monotonic(), forward, lateral, turn)))
                 elif action == "release":
                     self.events.put(("release", client_id))
                 elif action in ("stop", "toggle_pause", "reset"):

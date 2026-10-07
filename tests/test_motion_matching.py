@@ -3,6 +3,7 @@
 import numpy as np
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import mujoco
@@ -47,6 +48,35 @@ class MotionDatabaseTests(unittest.TestCase):
         motion["body_names"] = np.array(["right_foot", "base", "left_foot"])
         motion["joint_names"] = np.array(["right", "left"])
         return motion
+
+    def test_lateral_trajectory_keeps_heading_and_rotates_with_robot(self):
+        matcher = MotionMatcher(self.motion, self.model, self.feet)
+        matcher.reset()
+        matcher.cmd_vel[:] = 0
+        matcher.cmd_yaw_rate = 0
+        for yaw in (0.0, np.pi / 2):
+            matcher.yaw = yaw
+            for lateral in (-0.2, 0.2):
+                trajectory = matcher.desired_trajectory((0.0, 0.0, lateral))
+                positions, headings = np.split(trajectory, 2)
+                positions, headings = positions.reshape(-1, 2), headings.reshape(-1, 2)
+                np.testing.assert_allclose(positions[:, 0], 0, atol=1e-10)
+                self.assertTrue(np.all(positions[:, 1] * lateral > 0))
+                np.testing.assert_allclose(headings, np.tile([1, 0], (len(headings), 1)))
+
+    def test_command_heading_does_not_turn_for_strafe(self):
+        matcher = MotionMatcher(self.motion, self.model, self.feet)
+        matcher.cfg = replace(matcher.cfg, command_heading=True)
+        matcher.reset()
+        heading = matcher.yaw
+        # A recorded turn must not change commanded heading during a sidestep.
+        matcher.root_yaw_rate[:] = 0.7
+        for _ in range(20):
+            matcher.step(0.0, 0.0, lateral_speed=0.2)
+        self.assertAlmostEqual(matcher.yaw, heading)
+        for _ in range(20):
+            matcher.step(0.0, 0.5)
+        self.assertGreater(matcher.yaw, heading)
 
     def test_named_subset_matches_legacy_npz(self):
         with tempfile.TemporaryDirectory() as directory:

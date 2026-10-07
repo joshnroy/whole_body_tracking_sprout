@@ -38,7 +38,7 @@ class BrowserSessionTests(unittest.TestCase):
         s.control("reset")
         np.testing.assert_allclose(s.sim.data.qpos, initial)
         self.assertEqual(s.steps, 0)
-        self.assertEqual(s.command, (0.0, 0.0))
+        self.assertEqual(s.command, (0.0, 0.0, 0.0))
         self.assertTrue(s.paused)
         np.testing.assert_array_equal(s.sim.last_action, 0)
 
@@ -64,11 +64,14 @@ class BrowserSessionTests(unittest.TestCase):
         s = self.session
         s.control("set_forward", 100)
         s.control("set_turn", -100)
-        self.assertEqual(s.command, (s.cfg.matcher.max_forward_speed, -s.cfg.matcher.max_yaw_rate))
+        s.control("set_lateral", 100)
+        self.assertEqual(
+            s.command, (s.cfg.matcher.max_forward_speed, s.cfg.matcher.max_lateral_speed, -s.cfg.matcher.max_yaw_rate)
+        )
         s.control("set_forward", float("nan"))
         self.assertTrue(np.isfinite(s.command).all())
         s.control("stop")
-        self.assertEqual(s.command, (0.0, 0.0))
+        self.assertEqual(s.command, (0.0, 0.0, 0.0))
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ function installKeyboard(config) {
   const controller = new AbortController();
   const options = {capture: true, signal: controller.signal};
   const keys = new Set();
-  const movement = new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+  const movement = new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD', 'KeyQ', 'KeyE', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
   const shortcuts = {KeyP: 'toggle_pause', KeyR: 'reset', Space: 'stop'};
   const url = new URL(window.location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -32,7 +32,8 @@ function installKeyboard(config) {
   function drive() {
     const down = (...codes) => Number(codes.some(code => keys.has(code)));
     send({action: 'drive', forward: down('KeyW', 'ArrowUp') - down('KeyS', 'ArrowDown'),
-      turn: down('KeyA', 'ArrowLeft') - down('KeyD', 'ArrowRight')});
+      lateral: down('KeyA', 'ArrowLeft') - down('KeyD', 'ArrowRight'),
+      turn: down('KeyQ') - down('KeyE')});
   }
   function editable(target) {
     return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]');
@@ -62,7 +63,7 @@ function installKeyboard(config) {
       if (movement.has(event.code)) event.stopImmediatePropagation();
       return;
     }
-    if (!movement.has(event.code) && !(event.code in shortcuts) && !['KeyQ', 'KeyE'].includes(event.code)) return;
+    if (!movement.has(event.code) && !(event.code in shortcuts)) return;
     // Capture before Viser's document handlers, so robot keys never move its camera.
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -95,6 +96,16 @@ function installKeyboard(config) {
   document.addEventListener('pointerdown', event => {
     if (!(event.target instanceof HTMLCanvasElement)) release();
   }, options);
+  // A fixed chase camera has no mouse bindings or pointer lock. Swallow viewer
+  // orbit/pan/zoom events on the scene while preserving all sidebar interactions.
+  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'wheel', 'contextmenu', 'dblclick']) {
+    window.addEventListener(type, event => {
+      if (!(event.target instanceof HTMLCanvasElement)) return;
+      if (type === 'pointerdown' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, {...options, passive: false});
+  }
   // The server expires a held command if heartbeats cease (lost focus/network/tab suspension).
   const heartbeat = setInterval(() => {if (keys.size) drive();}, 150);
   window.sproutKeyboardCleanup = () => {

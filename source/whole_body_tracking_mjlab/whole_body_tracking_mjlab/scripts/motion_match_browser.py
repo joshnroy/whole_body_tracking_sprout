@@ -127,9 +127,12 @@ class BrowserViewer:
             self.scene = ViserMujocoScene(self.server, session.sim.model, num_envs=1)
             self.server.gui.add_markdown(
                 "## Motion control\n"
-                "Steer the robot with the controls below or the arrow keys. "
-                "Commands persist until changed.\n\n"
+                "Click the 3D scene, then press **P** to play.\n\n"
+                "**W / ↑**: faster forward · **S / ↓**: slower / backward\n\n"
+                "**A / ←**: turn left · **D / →**: turn right\n\n"
                 "**Space**: zero speed and turn · **P**: play/pause · **R**: reset\n\n"
+                "Each key press adjusts the command; commands persist until changed. "
+                "Click the scene again after editing a number to use shortcuts.\n\n"
                 "Motion matching selects from the recorded clip; requested speeds and turns are approximate."
             )
             self.status = self.server.gui.add_markdown("")
@@ -150,14 +153,14 @@ class BrowserViewer:
                 )
                 self.forward.on_update(self._slider_callback("set_forward"))
                 self.turn.on_update(self._slider_callback("set_turn"))
-                for label, action, value, key in (
-                    ("Forward ↑", "forward", 0.1, "arrowup"),
-                    ("Backward ↓", "forward", -0.1, "arrowdown"),
-                    ("Turn left ←", "turn", 0.25, "arrowleft"),
-                    ("Turn right →", "turn", -0.25, "arrowright"),
-                    ("Stop commands", "stop", 0.0, "space"),
+                for label, action, value, keys in (
+                    ("Forward ↑", "forward", 0.1, ("arrowup", "W")),
+                    ("Backward ↓", "forward", -0.1, ("arrowdown", "S")),
+                    ("Turn left ←", "turn", 0.25, ("arrowleft", "A")),
+                    ("Turn right →", "turn", -0.25, ("arrowright", "D")),
+                    ("Stop commands", "stop", 0.0, ("space",)),
                 ):
-                    self._button(label, action, value, key)
+                    self._button(label, action, value, *keys)
             self.play_button = self._button("Play", "toggle_pause", 0.0, "P")
             self._button("Reset", "reset", 0.0, "R")
             self.scene.create_scene_gui(camera_distance=2.5, camera_azimuth=135, camera_elevation=15)
@@ -182,14 +185,15 @@ class BrowserViewer:
 
         return callback
 
-    def _button(self, label, action, value, hotkey):
+    def _button(self, label, action, value, *hotkeys):
         button = self.server.gui.add_button(label)
 
         async def callback(_event):
             self.events.put((action, value))
 
         button.on_click(callback)
-        self.server.gui.add_command(label, hotkey=hotkey).on_trigger(callback)
+        for hotkey in hotkeys:
+            self.server.gui.add_command(f"{label} ({hotkey})", hotkey=hotkey).on_trigger(callback)
         return button
 
     def render(self) -> None:

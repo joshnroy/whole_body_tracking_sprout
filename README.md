@@ -239,12 +239,15 @@ both feet; body and joint metadata are used to handle the exported subset/order.
 
 | Control | Effect |
 |---|---|
-| Forward/backward buttons or ↑ / ↓ | Change requested forward speed by 0.1 m/s |
-| Left/right buttons or ← / → | Change requested turn rate by 0.25 rad/s |
+| Forward/backward buttons, W / S, or ↑ / ↓ | Change requested forward speed by 0.1 m/s |
+| Left/right buttons, A / D, or ← / → | Change requested turn rate by 0.25 rad/s |
 | Sliders | Set forward speed and turn rate directly |
 | Stop commands / Space | Set both requested velocities to zero |
 | Play/Pause / P | Start or freeze physics |
 | Reset / R | Restore the starting pose, clear commands and delays, and pause |
+
+For keyboard control, click the 3D scene and press **P** to play, then use **WASD** or the arrow keys. Click the scene
+again after editing a numeric input; shortcuts are inactive while typing into inputs. Each key press adjusts the command.
 
 Commands persist until changed. The clip determines which motions are possible: zero velocity requests a stop but does
 not freeze the robot, and a walking clip may not reproduce every requested speed/turn. Use **Pause** to freeze physics.

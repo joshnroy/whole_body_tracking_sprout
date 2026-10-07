@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -3934,14 +3934,18 @@ version = "0.1.0"
 source = { editable = "source/whole_body_tracking_mjlab" }
 dependencies = [
     { name = "mjlab" },
+    { name = "mjviser" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "onnxruntime", version = "1.30.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "viser" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "mjlab", specifier = ">=1.6.0" },
+    { name = "mjviser", specifier = ">=0.0.14" },
     { name = "onnxruntime" },
+    { name = "viser", specifier = ">=1.1.1" },
 ]
 
 [[package]]

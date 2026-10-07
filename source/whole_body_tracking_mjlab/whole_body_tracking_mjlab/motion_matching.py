@@ -19,9 +19,11 @@ Body poses and velocities come from forward kinematics on the robot model, in th
 
 from __future__ import annotations
 
-import mujoco
 import numpy as np
+from collections.abc import Mapping
 from dataclasses import dataclass
+
+import mujoco
 
 LN2 = float(np.log(2.0))
 
@@ -131,7 +133,7 @@ class MotionMatcher:
 
     def __init__(
         self,
-        motion_file: str,
+        motion_file: str | Mapping[str, np.ndarray],
         model: mujoco.MjModel,
         foot_body_names: tuple[str, str],
         cfg: MotionMatcherCfg = MotionMatcherCfg(),
@@ -140,7 +142,11 @@ class MotionMatcher:
         self.cfg = cfg
         self.model = model
         self.data = mujoco.MjData(model)
-        motion = np.load(motion_file)
+        if isinstance(motion_file, Mapping):
+            motion = motion_file
+        else:
+            with np.load(motion_file, allow_pickle=False) as archive:
+                motion = dict(archive)
         self.fps = float(motion["fps"][0])
         self.dt = 1.0 / self.fps
         self.joint_pos = motion["joint_pos"].astype(np.float64)
@@ -150,7 +156,8 @@ class MotionMatcher:
         body_lin_vel = motion["body_lin_vel_w"].astype(np.float64)
         self.num_frames = len(self.joint_pos)
 
-        # The npz stores every body and joint of the entity, in model order.
+        # Legacy npz files use model order. Named data (including ONNX exports)
+        # may reorder joints and contain only the tracked subset of bodies.
         prefix = f"{entity}/"
         self.body_names = [
             model.body(i).name[len(prefix) :] for i in range(model.nbody) if model.body(i).name.startswith(prefix)
@@ -171,16 +178,33 @@ class MotionMatcher:
         )
         self.root_qpos_adr = model.jnt_qposadr[free]
         self.root_dof_adr = model.jnt_dofadr[free]
-        if body_pos.shape[1] != len(self.body_names) or self.joint_pos.shape[1] != len(self.joint_names):
-            raise ValueError(
-                f"{motion_file} has {body_pos.shape[1]} bodies and {self.joint_pos.shape[1]} joints; the model has"
-                f" {len(self.body_names)} and {len(self.joint_names)}."
-            )
+        motion_bodies = list(motion.get("body_names", self.body_names))
+        motion_joints = list(motion.get("joint_names", self.joint_names))
+        if len(set(motion_bodies)) != len(motion_bodies) or len(set(motion_joints)) != len(motion_joints):
+            raise ValueError("Motion body and joint names must be unique.")
+        if set(motion_joints) != set(self.joint_names):
+            raise ValueError("Motion joint names do not match the robot.")
+        for key, shape in {
+            "joint_pos": (self.num_frames, len(motion_joints)),
+            "joint_vel": (self.num_frames, len(motion_joints)),
+            "body_pos_w": (self.num_frames, len(motion_bodies), 3),
+            "body_quat_w": (self.num_frames, len(motion_bodies), 4),
+            "body_lin_vel_w": (self.num_frames, len(motion_bodies), 3),
+        }.items():
+            if motion[key].shape != shape or not np.isfinite(motion[key]).all():
+                raise ValueError(f"Motion {key} must contain finite values with shape {shape}.")
+        required_bodies = {self.body_names[0], *foot_body_names}
+        if not required_bodies.issubset(motion_bodies):
+            raise ValueError(f"Motion is missing required bodies: {sorted(required_bodies - set(motion_bodies))}.")
+        joint_order = [motion_joints.index(name) for name in self.joint_names]
+        self.joint_pos = self.joint_pos[:, joint_order]
+        self.joint_vel = self.joint_vel[:, joint_order]
         if model.jnt_bodyid[free] != self.body_ids[0]:
             raise ValueError("The first body of the motion must be the floating base.")
 
         # Root channels. The root velocity of frame t moves the root from frame t-1 to t, in frame t-1's heading.
-        root_pos, root_quat = body_pos[:, 0], body_quat[:, 0]
+        root_idx = motion_bodies.index(self.body_names[0])
+        root_pos, root_quat = body_pos[:, root_idx], body_quat[:, root_idx]
         self.root_xy = root_pos[:, :2]
         self.root_yaw = np.unwrap(yaw_from_quat(root_quat))
         heading = quat_from_yaw(self.root_yaw)
@@ -204,7 +228,7 @@ class MotionMatcher:
         # Frames with the whole trajectory horizon inside the clip.
         self.num_valid = self.num_frames - horizon
         valid = np.arange(self.num_valid)
-        foot_ids = [self.body_names.index(name) for name in foot_body_names]
+        foot_ids = [motion_bodies.index(name) for name in foot_body_names]
         inv_heading = quat_conj(heading[valid])[:, None]
         root_offset = np.concatenate([self.root_xy[valid], np.zeros((self.num_valid, 1))], axis=-1)[:, None]
         foot_pos = quat_apply(inv_heading, body_pos[valid][:, foot_ids] - root_offset).reshape(self.num_valid, -1)
@@ -243,6 +267,36 @@ class MotionMatcher:
         self.search_interval = max(1, int(round(cfg.search_interval * self.fps)))
         self.min_jump = int(round(cfg.min_jump * self.fps))
         self.num_jumps = 0
+
+    @classmethod
+    def from_onnx(
+        cls,
+        path: str,
+        model: mujoco.MjModel,
+        foot_body_names: tuple[str, str],
+        fps: float,
+        cfg: MotionMatcherCfg = MotionMatcherCfg(),
+        entity: str = "robot",
+    ) -> MotionMatcher:
+        """Use an exported policy's embedded motion; its sample rate comes from the task config."""
+        import onnx
+        from onnx import numpy_helper
+
+        exported = onnx.load(path)
+        metadata = {p.key: p.value for p in exported.metadata_props}
+        keys = ("joint_pos", "joint_vel", "body_pos_w", "body_quat_w", "body_lin_vel_w")
+        motion = {
+            tensor.name.split(".")[0]: numpy_helper.to_array(tensor)
+            for tensor in exported.graph.initializer
+            if tensor.name.split(".")[0] in keys
+        }
+        missing = set(keys) - motion.keys()
+        if missing or not all(name in metadata for name in ("joint_names", "body_names")):
+            raise ValueError("ONNX has no complete named reference motion; provide --motion-file with a training npz.")
+        motion["fps"] = np.array([fps])
+        for key in ("joint_names", "body_names"):
+            motion[key] = np.array(metadata[key].split(","))
+        return cls(motion, model, foot_body_names, cfg, entity)
 
     # Commands.
 

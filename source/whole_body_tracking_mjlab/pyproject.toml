@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "BeyondMimic motion tracking tasks on mjlab (MuJoCo-Warp)."
 requires-python = ">=3.10,<3.15"
 license = "MIT"
-dependencies = ["mjlab>=1.6.0", "onnxruntime"]
+dependencies = ["mjlab>=1.6.0", "onnxruntime", "mjviser>=0.0.14", "viser>=1.1.1"]
 
 [project.scripts]
 wbt-train = "whole_body_tracking_mjlab.scripts.train:main"
@@ -17,6 +17,7 @@ wbt-list-envs = "whole_body_tracking_mjlab.scripts.list_envs:main"
 wbt-csv-to-npz = "whole_body_tracking_mjlab.scripts.csv_to_npz:cli"
 wbt-sim2sim = "whole_body_tracking_mjlab.scripts.sim2sim:main"
 wbt-motion-match = "whole_body_tracking_mjlab.scripts.motion_match:main"
+wbt-motion-match-browser = "whole_body_tracking_mjlab.scripts.motion_match_browser:main"
 
 [tool.setuptools.packages.find]
 include = ["whole_body_tracking_mjlab*"]

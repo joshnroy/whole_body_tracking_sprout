@@ -98,7 +98,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
     ##
 
     commands: dict[str, CommandTermCfg] = {
-        "motion": mdp.MotionCommandCfg(
+        "motion": mdp.MultiMotionCommandCfg(
             entity_name="robot",
             resampling_time_range=(1.0e9, 1.0e9),
             debug_vis=True,
@@ -112,7 +112,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
             },
             velocity_range=VELOCITY_RANGE,
             joint_position_range=(-0.1, 0.1),
-            # Set per robot / on the command line.
+            # Set per robot / on the command line: one .npz, a directory of them, or a .txt manifest.
             motion_file="",
             anchor_body_name="",
             body_names=(),

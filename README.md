@@ -162,6 +162,28 @@ uv run wbt-play Tracking-Flat-G1-v0 --wandb-run-path {wandb-run-path}
 The W&B run path is shown in the run overview. It has the form `{your-organization}/{project_name}/` followed by an
 8-character run ID. It is not the run name.
 
+### Training on several motions
+
+`--env.commands.motion.motion-file` also takes a directory, which trains one policy on every `.npz` in it, or a `.txt`
+manifest with one `.npz` path per line (relative to the manifest; blank lines and `#` comments are skipped):
+
+```bash
+uv run wbt-train Tracking-Flat-Sprout-Wo-State-Estimation-v0 --env.commands.motion.motion-file motions/ \
+  --agent.logger tensorboard --agent.run-name all_motions
+```
+
+All motions must be retargeted to the same robot at the same fps. The clips are concatenated into one reference, and
+each env tracks one clip at a time:
+
+- An env that reaches the end of its clip resamples a start frame, so it never runs on into the next clip.
+- Adaptive sampling keeps one-second failure bins per clip, so no bin straddles two clips. Uniform sampling picks
+  frames uniformly over all clips, so a longer clip is sampled more often.
+- In play mode (`sampling_mode="start"`) each env starts at the first frame of a random clip.
+
+The exported ONNX bundles the concatenated reference. `wbt-sim2sim` and `wbt-motion-match` index it from frame 0, so they
+play the clips back to back; use `--start-frame` and `--num-frames` to run one of them. A single `.npz` behaves exactly
+as before.
+
 ## Sim2sim (CPU MuJoCo)
 
 `wbt-sim2sim` runs an exported `{run}.onnx` in plain CPU MuJoCo with onnxruntime instead of MuJoCo-Warp. It builds the
@@ -322,7 +344,12 @@ python scripts/rsl_rl/play.py --task=Tracking-Flat-G1-v0 --num_envs=2 --wandb_pa
   Per-robot env configs (`flat_env_cfg.py`), PPO configs (`rl_cfg.py`) and task registration.
 
 - **`source/whole_body_tracking_mjlab/whole_body_tracking_mjlab/tasks/tracking/mdp`**
-  Re-exports mjlab's tracking MDP terms and adds `undesired_contacts`.
+  Re-exports mjlab's tracking MDP terms and adds `undesired_contacts` and `MultiMotionCommand` (`multi_motion.py`),
+  which extends mjlab's motion command to several reference motions.
+
+- **`source/whole_body_tracking_mjlab/tests`**
+  Tests, run with `uv run pytest source/whole_body_tracking_mjlab/tests`. The command tests build a small G1
+  environment and are skipped without CUDA.
 
 - **`source/whole_body_tracking_mjlab/whole_body_tracking_mjlab/robots`**
   The Sprout model loader and DC motor models.

@@ -1,8 +1,8 @@
+import whole_body_tracking_mjlab.tasks.tracking.mdp as mdp
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
-
-import whole_body_tracking_mjlab.tasks.tracking.mdp as mdp
 from whole_body_tracking_mjlab.robots.sprout import SPROUT_ACTION_SCALE, get_sprout_robot_cfg
 from whole_body_tracking_mjlab.tasks.tracking.config.g1.rl_cfg import LOW_FREQ_SCALE
 from whole_body_tracking_mjlab.tasks.tracking.tracking_env_cfg import (
@@ -26,7 +26,14 @@ PUSH_SCALE = 0.5
 CONTACT_ALLOWED_BODY_NAMES = END_EFFECTOR_BODY_NAMES + ("left_gripper_upper_link", "right_gripper_upper_link")
 # Actor terms read from the robot's sensors or state estimator. Each is delayed by 0 or 1 policy steps, resampled every
 # step; the reference motion and the last action are known exactly on the robot.
-DELAYED_OBS_TERMS = ("motion_anchor_pos_b", "motion_anchor_ori_b", "base_lin_vel", "base_ang_vel", "joint_pos", "joint_vel")
+DELAYED_OBS_TERMS = (
+    "motion_anchor_pos_b",
+    "motion_anchor_ori_b",
+    "base_lin_vel",
+    "base_ang_vel",
+    "joint_pos",
+    "joint_vel",
+)
 
 
 def sprout_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -91,6 +98,21 @@ def sprout_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 def sprout_flat_wo_state_estimation_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     cfg = sprout_flat_env_cfg(play=play)
     remove_state_estimation(cfg)
+    return cfg
+
+
+def sprout_flat_wo_state_estimation_fingers_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+    """Standard deployable-actor task with only finger joint-angle matching added."""
+    cfg = sprout_flat_wo_state_estimation_env_cfg(play=play)
+    cfg.rewards["motion_finger_joint_pos"] = RewardTermCfg(
+        func=mdp.motion_joint_position_error_exp,
+        weight=0.5,
+        params={
+            "command_name": "motion",
+            "std": 0.1,
+            "joint_names": ("left_gripper_joint", "right_gripper_joint"),
+        },
+    )
     return cfg
 
 

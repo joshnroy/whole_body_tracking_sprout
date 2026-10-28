@@ -1,12 +1,30 @@
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from mjlab.sensor import ContactSensor
+from mjlab.tasks.tracking.mdp.commands import MotionCommand
 
 if TYPE_CHECKING:
     from mjlab.envs import ManagerBasedRlEnv
+
+
+def motion_joint_position_error_exp(
+    env: ManagerBasedRlEnv, command_name: str, std: float, joint_names: tuple[str, ...]
+) -> torch.Tensor:
+    """Match selected joints to their current reference angles, independently of tracked bodies.
+
+    This supervises joints such as Sprout's moving fingers, whose motion does not
+    change any of the existing tracked body poses. Average squared error only
+    over the selected joints before applying the Gaussian kernel.
+    """
+    if not joint_names:
+        raise ValueError("joint_names must contain at least one joint")
+    command = cast(MotionCommand, env.command_manager.get_term(command_name))
+    joint_ids = [command.robot.joint_names.index(name) for name in joint_names]
+    error = torch.square(command.robot.data.joint_pos[:, joint_ids] - command.joint_pos[:, joint_ids]).mean(-1)
+    return torch.exp(-error / std**2)
 
 
 def undesired_contacts(env: ManagerBasedRlEnv, sensor_name: str, threshold: float) -> torch.Tensor:

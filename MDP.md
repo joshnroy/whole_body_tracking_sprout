@@ -6,7 +6,7 @@ This page describes the observations, domain randomization, rewards and terminat
 The robot configs ([`g1/flat_env_cfg.py`](source/whole_body_tracking_mjlab/whole_body_tracking_mjlab/tasks/tracking/config/g1/flat_env_cfg.py),
 [`sprout/flat_env_cfg.py`](source/whole_body_tracking_mjlab/whole_body_tracking_mjlab/tasks/tracking/config/sprout/flat_env_cfg.py))
 fill in body names, the action scale and the contact sensor. The term implementations come from mjlab
-(`mjlab.tasks.tracking.mdp`), except `undesired_contacts`, which is in
+(`mjlab.tasks.tracking.mdp`), except selected-joint angle tracking and `undesired_contacts`, which are in
 [`mdp/rewards.py`](source/whole_body_tracking_mjlab/whole_body_tracking_mjlab/tasks/tracking/mdp/rewards.py).
 
 ## Timing and action
@@ -99,6 +99,17 @@ over the tracked bodies before the kernel.
 | `joint_limit` | −10.0 | – | Sum over joints of how far each joint is past its soft limit (90% of the joint range) |
 | `undesired_contacts` | −0.1 | – | Number of bodies with a net contact force above 1 N at any physics substep of the policy step. Every body counts except G1's ankles and wrists, and Sprout's feet and gripper links |
 
+The opt-in `Tracking-Flat-Sprout-Wo-State-Estimation-Fingers-v0` task adds one term:
+
+| Term | Weight | std | Error |
+|---|---:|---:|---|
+| `motion_finger_joint_pos` | 0.5 | 0.1 rad | Mean squared reference-angle error over `left_gripper_joint` and `right_gripper_joint` |
+
+These joints move the upper fingers, which are absent from the tracked-body list. Their opening therefore has no
+direct body-pose matching cost. The extra reward is `0.5 * exp(-mean((q_fingers - q_reference_fingers)^2) / 0.1^2)`.
+It follows both gripper reference angles at the current frame, including moving-hand references, without adding
+tracked bodies or changing observation dimensions. All original rewards and other settings are unchanged.
+
 ## Terminations
 
 | Term | Condition |
@@ -119,6 +130,7 @@ often.
 | `-Wo-State-Estimation-v0` | Actor loses `motion_anchor_pos_b` and `base_lin_vel` |
 | `-Low-Freq-v0` | Policy at 25 Hz (decimation 8), `action_rate_l2` weight halved, contact history covers 8 substeps. PPO uses 12 steps per env and `γ = 0.99²`, `λ = 0.95²` |
 | `-Wo-State-Estimation-No-DR-v0` | No state estimation, and no friction, encoder-bias or CoM randomization, pushes or observation noise |
+| `Tracking-Flat-Sprout-Wo-State-Estimation-Fingers-v0` | No state estimation, with only the additional two-gripper reference-angle reward above |
 
 ## PPO
 

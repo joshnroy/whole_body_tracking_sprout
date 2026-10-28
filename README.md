@@ -91,9 +91,21 @@ matching run on the CPU.
 | `Tracking-Flat-{G1,Sprout}-Wo-State-Estimation-v0` | No anchor position or base linear velocity in the policy observations |
 | `Tracking-Flat-{G1,Sprout}-Low-Freq-v0` | Policy at 25 Hz instead of 50 Hz |
 | `Tracking-Flat-{G1,Sprout}-Wo-State-Estimation-No-DR-v0` | No state estimation and no domain randomization |
+| `Tracking-Flat-Sprout-Wo-State-Estimation-Fingers-v0` | Standard Sprout no-state-estimation task plus reference-angle matching for both grippers |
 
 The G1 tasks have the same rewards, terminations, observations, randomization and PPO settings as the Isaac Lab
 configs. See [MDP.md](MDP.md) for details.
+
+Sprout's tracked bodies include the fixed lower grippers, but exclude the moving upper fingers. To also reward the
+two gripper joints for following their reference angles, use the opt-in `Fingers` task. It adds only
+`motion_finger_joint_pos` (weight 0.5, tolerance 0.1 rad); the original rewards, tracked bodies, actor/critic inputs,
+domain randomization and PPO settings remain unchanged. It follows the supplied reference rather than forcing the
+hands closed. For example:
+
+```bash
+uv run wbt-train Tracking-Flat-Sprout-Wo-State-Estimation-Fingers-v0 \
+  --env.commands.motion.motion-file {motion_name}.npz --agent.logger tensorboard
+```
 
 ## Motion Preprocessing
 
